@@ -4,7 +4,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full flex-col">
       {/* macOS titlebar drag region */}
-      <div className="titlebar-drag flex h-12 shrink-0 items-center gap-2.5 pl-[72px] pr-4">
+      <div className="titlebar-drag flex h-12 shrink-0 items-center gap-2.5 pl-6 pr-4">
         <span
           className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-accent/15"
         >
