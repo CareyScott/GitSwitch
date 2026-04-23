@@ -38,13 +38,12 @@ npm install
 npm run tauri dev
 ```
 
-To build a distributable `.app`:
+To build and install the app:
 
 ```bash
 npm run tauri build
+cp -r src-tauri/target/release/bundle/macos/GitSwitch.app /Applications/
 ```
-
-The built app will be in `src-tauri/target/release/bundle/macos/`.
 
 ## Adding an account
 
