@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/128x128@2x.png" width="128" alt="GitSwitch icon" />
+  <img src="src-tauri/icons/icon-readme.png" width="128" alt="GitSwitch icon" />
 </p>
 
 <h1 align="center">GitSwitch</h1>
