@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "install:app": "npm run tauri build && cp -r 'src-tauri/target/release/bundle/macos/Git Switch.app' /Applications/"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
