@@ -33,11 +33,43 @@ If you work across multiple Git accounts — a personal GitHub, a work Bitbucket
 ### Build and run
 
 ```bash
-git clone https://github.com/CareyScott/GitSwitch.git
+git clone <your-fork-of-this-repo>
 cd GitSwitch
 npm install
 npm run tauri dev
 ```
+
+### Optional: use your own GitHub OAuth App
+
+GitSwitch ships with a default Client ID for the **Sign in with GitHub**
+button, so device-flow login works out of the box. If you want to use your
+own OAuth App instead (to see authorization analytics under your account, or
+to avoid sharing rate limits), register one and override the Client ID at
+build time:
+
+1. Go to [github.com/settings/developers](https://github.com/settings/developers) → **OAuth Apps** → **New OAuth App**
+2. Fill in any Homepage URL and Authorization callback URL (device flow doesn't use them — the form just requires values)
+3. ✅ Check **Enable Device Flow**
+4. Save, then copy the **Client ID** (looks like `Ov23li...` or `Iv1.xxxxx`)
+5. Set it as an environment variable before building:
+
+   ```bash
+   # macOS / Linux
+   export GITHUB_CLIENT_ID=Ov23liXXXXXXXXXXXX
+   npm run tauri dev
+
+   # Windows (PowerShell)
+   $env:GITHUB_CLIENT_ID = "Ov23liXXXXXXXXXXXX"
+   npm run tauri dev
+   ```
+
+### Adding `repo` scope and Git Credential Manager integration
+
+When you click **Switch** on an account, GitSwitch also writes the account's
+token into your OS git credential helper (Git Credential Manager on Windows,
+osxkeychain on macOS) and pins git to use that account's username for the
+provider's host. So `git push` over HTTPS authenticates as the right user
+automatically — no more accidentally pushing under the wrong account.
 
 To build and install:
 

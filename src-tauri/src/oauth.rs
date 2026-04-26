@@ -6,11 +6,15 @@
 
 use serde::{Deserialize, Serialize};
 
-// Public client identifier for the GitSwitch_OAuth app on github.com.
-// Safe to commit — device flow doesn't use a client secret. Anyone forking
-// this repo can either reuse this ID (subject to its rate limits) or register
-// their own OAuth App with Device Flow enabled and replace it.
-const GITHUB_CLIENT_ID: Option<&str> = Some("Ov23liPCroas5Zmo9GxQ");
+// Public client identifier for the GitHub OAuth App used by this build.
+// Safe to commit — device flow doesn't use a client secret, and a client_id
+// is a public identifier (same risk profile as a Stripe publishable key).
+// The env var lets forks override it with their own OAuth App without
+// editing source.
+const GITHUB_CLIENT_ID: Option<&str> = match option_env!("GITHUB_CLIENT_ID") {
+    Some(id) => Some(id),
+    None => Some("Ov23liPCroas5Zmo9GxQ"),
+};
 
 // `repo` lets the token be used by `git push` / `git clone` against private
 // repos. Without it we'd only have an identity token, which doesn't actually

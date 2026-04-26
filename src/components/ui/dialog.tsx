@@ -30,11 +30,11 @@ export const DialogContent = React.forwardRef<
   <DialogPortal>
     <DialogOverlay />
     {/* Use inset-0 + flex centering instead of translate (Tailwind v4 compat) */}
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-8">
+    <div className="fixed inset-0 z-50 flex items-start justify-center py-8">
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          "relative w-full max-w-md rounded-lg border border-border bg-bg-elev p-5 shadow-lg focus:outline-none",
+          "relative flex max-h-[calc(100vh-4rem)] w-full max-w-md flex-col overflow-y-auto rounded-lg border border-border bg-bg-elev p-5 shadow-lg focus:outline-none",
           className,
         )}
         {...props}

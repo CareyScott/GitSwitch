@@ -199,7 +199,7 @@ export function AddAccountDialog({
             <Input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder={isGithub ? "e.g. Scott (Personal)" : "e.g. Scott (Work)"}
+              placeholder={isGithub ? "e.g. Personal" : "e.g. Work"}
             />
           </div>
 
