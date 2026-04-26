@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "install:app": "npm run tauri build && cp -r 'src-tauri/target/release/bundle/macos/Git Switch.app' /Applications/"
+    "install:app": "npm run tauri build && cp -r 'src-tauri/target/release/bundle/macos/Git Switch.app' /Applications/",
+    "install:app:win": "npm run tauri build && powershell -NoProfile -Command \"Start-Process (Get-ChildItem 'src-tauri/target/release/bundle/nsis/Git Switch_*-setup.exe' | Select-Object -First 1).FullName\""
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

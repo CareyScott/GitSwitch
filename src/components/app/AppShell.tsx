@@ -1,6 +1,17 @@
-import { GitBranch } from "lucide-react";
+import { GitBranch, FolderOpen } from "lucide-react";
+import { openPath } from "@tauri-apps/plugin-opener";
+import { getConfigFolder } from "@/lib/tauri";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const handleOpenConfig = async () => {
+    try {
+      const folder = await getConfigFolder();
+      await openPath(folder);
+    } catch (e) {
+      console.error("Failed to open config folder:", e);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* macOS titlebar drag region */}
@@ -13,6 +24,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <span className="text-[13px] font-semibold tracking-tight text-fg-default">
           Git Switch
         </span>
+        <button
+          type="button"
+          onClick={handleOpenConfig}
+          title="Open accounts folder"
+          className="titlebar-nodrag ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-bg-elevated hover:text-fg-default"
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+        </button>
       </div>
 
       {/* Main content */}

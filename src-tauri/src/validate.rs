@@ -118,20 +118,37 @@ pub async fn validate_bitbucket(
     })
 }
 
-/// Validate a stored account by its ID — reads the full token from disk,
-/// never exposes it to the frontend.
+/// Validate a stored account by its ID. On a successful validation, also
+/// clears any stale GCM entries for the host and pins git to use this
+/// account's namespaced credential. This is the "fix this account if needed"
+/// flow — Switch also does this, but Validate lets the user run it without
+/// touching their commit identity (`user.name` / `user.email`).
 #[tauri::command]
 pub async fn validate_account(id: String) -> Result<ValidationResult, String> {
     let account = accounts::get_full_account(&id)?;
 
-    match account.provider.as_str() {
-        "github" => validate_github(account.username, account.token).await,
-        "bitbucket" => validate_bitbucket(account.username, account.token).await,
-        other => Ok(ValidationResult {
-            valid: false,
-            display_name: None,
-            avatar_url: None,
-            error: Some(format!("Unknown provider: {}", other)),
-        }),
+    let result = match account.provider.as_str() {
+        "github" => validate_github(account.username.clone(), account.token.clone()).await?,
+        "bitbucket" => {
+            validate_bitbucket(account.username.clone(), account.token.clone()).await?
+        }
+        other => {
+            return Ok(ValidationResult {
+                valid: false,
+                display_name: None,
+                avatar_url: None,
+                error: Some(format!("Unknown provider: {}", other)),
+            });
+        }
+    };
+
+    if result.valid {
+        crate::git_config::pin_credential(
+            &account.provider,
+            &account.username,
+            &account.token,
+        );
     }
+
+    Ok(result)
 }

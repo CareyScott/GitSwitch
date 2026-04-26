@@ -1,5 +1,6 @@
 mod accounts;
 mod git_config;
+mod oauth;
 mod shell_env;
 mod validate;
 
@@ -15,11 +16,14 @@ pub fn run() {
             accounts::get_accounts,
             accounts::add_account,
             accounts::remove_account,
+            accounts::get_config_folder,
             git_config::get_active_git_user,
             git_config::switch_account,
             validate::validate_github,
             validate::validate_bitbucket,
             validate::validate_account,
+            oauth::github_device_start,
+            oauth::github_device_poll,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   CheckCircle2,
   XCircle,
   Loader2,
 } from "lucide-react";
+import { DeviceFlowDialog } from "./DeviceFlowDialog";
 import {
   Dialog,
   DialogContent,
@@ -40,9 +41,11 @@ function BitbucketIcon({ className }: { className?: string }) {
 export function AddAccountDialog({
   open,
   onOpenChange,
+  prefill,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  prefill?: { name?: string; email?: string };
 }) {
   const addMutation = useAddAccount();
 
@@ -54,8 +57,17 @@ export function AddAccountDialog({
 
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [deviceOpen, setDeviceOpen] = useState(false);
 
   const isGithub = provider === "github";
+
+  // Apply prefill values whenever the dialog opens.
+  useEffect(() => {
+    if (open && prefill) {
+      if (prefill.name) setLabel(prefill.name);
+      if (prefill.email) setEmail(prefill.email);
+    }
+  }, [open, prefill]);
 
   const resetForm = () => {
     setProvider("github");
@@ -158,6 +170,26 @@ export function AddAccountDialog({
             </div>
           </div>
 
+          {/* GitHub device-flow shortcut */}
+          {isGithub && (
+            <>
+              <Button
+                variant="outline"
+                className="w-full"
+                size="sm"
+                onClick={() => setDeviceOpen(true)}
+              >
+                <GithubIcon className="mr-1.5 h-3.5 w-3.5" />
+                Sign in with GitHub
+              </Button>
+              <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-fg-subtle">
+                <div className="h-px flex-1 bg-border-default" />
+                or paste a token
+                <div className="h-px flex-1 bg-border-default" />
+              </div>
+            </>
+          )}
+
           {/* Display name */}
           <div>
             <label className="text-label mb-1.5 block">
@@ -167,7 +199,7 @@ export function AddAccountDialog({
             <Input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder={isGithub ? "e.g. Scott (Personal)" : "e.g. Scott (Work)"}
+              placeholder={isGithub ? "e.g. Personal" : "e.g. Work"}
             />
           </div>
 
@@ -272,6 +304,24 @@ export function AddAccountDialog({
           </div>
         </div>
       </DialogContent>
+
+      <DeviceFlowDialog
+        open={deviceOpen}
+        onOpenChange={setDeviceOpen}
+        onSuccess={({ access_token, username: u, email: e, display_name }) => {
+          setProvider("github");
+          setUsername(u);
+          setEmail(e);
+          setToken(access_token);
+          if (display_name && !label) setLabel(display_name);
+          setValidation({
+            valid: true,
+            display_name: display_name ?? u,
+            avatar_url: null,
+            error: null,
+          });
+        }}
+      />
     </Dialog>
   );
 }

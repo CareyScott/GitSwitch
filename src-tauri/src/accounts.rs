@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+const KEYRING_SERVICE: &str = "git-switch";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Account {
     pub id: String,
@@ -9,6 +11,11 @@ pub struct Account {
     pub label: String,
     pub username: String,
     pub email: String,
+    // Tokens live in the OS keychain, not on disk.
+    // The field is kept on the struct for legacy migration: accounts.json
+    // written by older versions had plaintext tokens here, which we move into
+    // the keychain on first read. New writes never serialize this field.
+    #[serde(default, skip_serializing)]
     pub token: String,
 }
 
@@ -42,8 +49,6 @@ fn store_path() -> PathBuf {
     config_dir.join("git-switch").join("accounts.json")
 }
 
-/// If the new store doesn't exist but the old `git-accounts` store does,
-/// migrate it automatically (one-time, silent).
 fn migrate_legacy_store(new_path: &PathBuf) {
     if new_path.exists() {
         return;
@@ -59,6 +64,30 @@ fn migrate_legacy_store(new_path: &PathBuf) {
     }
 }
 
+// ---- keychain helpers ----
+
+fn keyring_set(id: &str, token: &str) -> Result<(), String> {
+    keyring::Entry::new(KEYRING_SERVICE, id)
+        .map_err(|e| format!("keyring entry failed: {}", e))?
+        .set_password(token)
+        .map_err(|e| format!("keyring set failed: {}", e))
+}
+
+fn keyring_get(id: &str) -> Option<String> {
+    keyring::Entry::new(KEYRING_SERVICE, id)
+        .ok()?
+        .get_password()
+        .ok()
+}
+
+fn keyring_delete(id: &str) {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, id) {
+        let _ = entry.delete_credential();
+    }
+}
+
+// ---- store ----
+
 fn read_store() -> AccountStore {
     let path = store_path();
     migrate_legacy_store(&path);
@@ -66,7 +95,22 @@ fn read_store() -> AccountStore {
         return AccountStore::default();
     }
     let data = fs::read_to_string(&path).unwrap_or_default();
-    serde_json::from_str(&data).unwrap_or_default()
+    let mut store: AccountStore = serde_json::from_str(&data).unwrap_or_default();
+
+    // One-time migration: move any plaintext tokens left on disk into the
+    // OS keychain. Best-effort — if the keychain is unavailable, leave the
+    // token on disk so the user can still validate/switch.
+    let mut migrated = false;
+    for account in &mut store.accounts {
+        if !account.token.is_empty() && keyring_set(&account.id, &account.token).is_ok() {
+            account.token.clear();
+            migrated = true;
+        }
+    }
+    if migrated {
+        let _ = write_store(&store);
+    }
+    store
 }
 
 fn write_store(store: &AccountStore) -> Result<(), String> {
@@ -89,13 +133,17 @@ fn mask_token(token: &str) -> String {
 }
 
 fn to_safe(account: &Account) -> AccountSafe {
+    let masked = match keyring_get(&account.id) {
+        Some(t) => mask_token(&t),
+        None => "****".to_string(),
+    };
     AccountSafe {
         id: account.id.clone(),
         provider: account.provider.clone(),
         label: account.label.clone(),
         username: account.username.clone(),
         email: account.email.clone(),
-        token: mask_token(&account.token),
+        token: masked,
     }
 }
 
@@ -108,19 +156,29 @@ pub fn get_accounts() -> Result<Vec<AccountSafe>, String> {
 #[tauri::command]
 pub fn add_account(account: NewAccount) -> Result<AccountSafe, String> {
     let mut store = read_store();
+    let id = uuid::Uuid::new_v4().to_string();
+
+    // Write secret to keyring first; if that fails we never persist a
+    // half-rowed account whose secret is missing.
+    keyring_set(&id, &account.token)?;
 
     let new_account = Account {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: id.clone(),
         provider: account.provider,
         label: account.label,
         username: account.username,
         email: account.email,
-        token: account.token,
+        token: String::new(),
     };
 
     let safe = to_safe(&new_account);
     store.accounts.push(new_account);
-    write_store(&store)?;
+
+    if let Err(e) = write_store(&store) {
+        // Roll back the orphaned keyring entry so we don't leak secrets.
+        keyring_delete(&id);
+        return Err(e);
+    }
 
     Ok(safe)
 }
@@ -128,25 +186,48 @@ pub fn add_account(account: NewAccount) -> Result<AccountSafe, String> {
 #[tauri::command]
 pub fn remove_account(id: String) -> Result<(), String> {
     let mut store = read_store();
-    let initial_len = store.accounts.len();
-    store.accounts.retain(|a| a.id != id);
+    let removed = store
+        .accounts
+        .iter()
+        .find(|a| a.id == id)
+        .cloned()
+        .ok_or_else(|| format!("Account {} not found", id))?;
 
-    if store.accounts.len() == initial_len {
-        return Err(format!("Account {} not found", id));
+    store.accounts.retain(|a| a.id != id);
+    write_store(&store)?;
+    keyring_delete(&id);
+
+    // Best-effort: also tell the git credential helper to forget this user
+    // for the provider's host, so a future push doesn't silently reuse it.
+    if let Some(host) = crate::git_config::host_for(&removed.provider) {
+        let _ = crate::git_config::forget_credential(host, &removed.username);
     }
 
-    write_store(&store)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_config_folder() -> Result<String, String> {
+    let folder = store_path()
+        .parent()
+        .ok_or("Could not resolve config folder")?
+        .to_path_buf();
+    fs::create_dir_all(&folder).map_err(|e| format!("Failed to ensure config dir: {}", e))?;
+    Ok(folder.to_string_lossy().into_owned())
 }
 
 /// Internal: get the full account with token for validation purposes.
 /// Not exposed to the frontend.
 pub fn get_full_account(id: &str) -> Result<Account, String> {
     let store = read_store();
-    store
+    let mut account = store
         .accounts
         .iter()
         .find(|a| a.id == id)
         .cloned()
-        .ok_or_else(|| format!("Account {} not found", id))
+        .ok_or_else(|| format!("Account {} not found", id))?;
+    account.token = keyring_get(id).ok_or_else(|| {
+        format!("Token for account {} not found in keychain", id)
+    })?;
+    Ok(account)
 }
