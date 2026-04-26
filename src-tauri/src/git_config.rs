@@ -109,6 +109,20 @@ fn forget_default_credential(host: &str) {
     let _ = git_credential_op("reject", host, Some("PersonalAccessToken"), None);
 }
 
+// Clear stale entries, store the credential under the real username, and
+// pin git to that username for the host. Shared by Switch (which also moves
+// commit identity) and Validate (which only ensures GCM is set up for this
+// account, without touching git config user.name/user.email).
+pub fn pin_credential(provider: &str, username: &str, token: &str) {
+    let Some(host) = host_for_provider(provider) else {
+        return;
+    };
+    forget_default_credential(host);
+    let _ = git_credential_op("approve", host, Some(username), Some(token));
+    let url_key = format!("credential.https://{}.username", host);
+    let _ = git_config_set(&url_key, username);
+}
+
 pub fn host_for(provider: &str) -> Option<&'static str> {
     host_for_provider(provider)
 }
@@ -134,14 +148,7 @@ pub fn switch_account(id: String) -> Result<(), String> {
     // with no username and gets back whatever default credential GCM has —
     // often a stale one from a previous setup. Pinning forces git to ask
     // for *this* account's namespaced credential.
-    if let Some(host) = host_for_provider(&account.provider) {
-        // Clear any stale unnamespaced default credential for this host so
-        // git doesn't silently reuse it.
-        forget_default_credential(host);
-        let _ = git_credential_op("approve", host, Some(&account.username), Some(&account.token));
-        let url_key = format!("credential.https://{}.username", host);
-        let _ = git_config_set(&url_key, &account.username);
-    }
+    pin_credential(&account.provider, &account.username, &account.token);
 
     Ok(())
 }
