@@ -11,6 +11,7 @@ export function AccountList() {
   const { data: accounts, isLoading } = useAccounts();
   const { data: gitUser } = useActiveGitUser();
   const [addOpen, setAddOpen] = useState(false);
+  const [prefill, setPrefill] = useState<{ name?: string; email?: string } | undefined>();
 
   // Check if the current git identity is already tracked as a stored account
   const currentIsTracked =
@@ -40,7 +41,10 @@ export function AccountList() {
         </div>
         <Button
           size="sm"
-          onClick={() => setAddOpen(true)}
+          onClick={() => {
+            setPrefill(undefined);
+            setAddOpen(true);
+          }}
           className="titlebar-nodrag"
         >
           <Plus className="mr-1 h-3.5 w-3.5" />
@@ -60,6 +64,10 @@ export function AccountList() {
             <DetectedAccountCard
               name={gitUser.name}
               email={gitUser.email}
+              onAdd={(p) => {
+                setPrefill(p);
+                setAddOpen(true);
+              }}
             />
           </div>
         )}
@@ -103,7 +111,14 @@ export function AccountList() {
       </div>
 
       {/* Add dialog */}
-      <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} />
+      <AddAccountDialog
+        open={addOpen}
+        onOpenChange={(v) => {
+          setAddOpen(v);
+          if (!v) setPrefill(undefined);
+        }}
+        prefill={prefill}
+      />
     </div>
   );
 }

@@ -1,10 +1,21 @@
 use serde::Serialize;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+use crate::accounts;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct GitUser {
     pub name: String,
     pub email: String,
+}
+
+fn host_for_provider(provider: &str) -> Option<&'static str> {
+    match provider {
+        "github" => Some("github.com"),
+        "bitbucket" => Some("bitbucket.org"),
+        _ => None,
+    }
 }
 
 fn git_config_get(key: &str) -> Option<String> {
@@ -38,6 +49,58 @@ fn git_config_set(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// Pipe credential descriptors into `git credential <action>` on stdin.
+// On Windows that routes to Git Credential Manager (which stores in Windows
+// Credential Manager); on macOS the default helper is osxkeychain. The
+// stored credential is what `git push` / `git clone` over HTTPS uses.
+fn git_credential_op(
+    action: &str,
+    host: &str,
+    username: &str,
+    password: Option<&str>,
+) -> Result<(), String> {
+    let mut child = Command::new("git")
+        .args(["credential", action])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn git credential {}: {}", action, e))?;
+
+    let mut payload = format!(
+        "protocol=https\nhost={}\nusername={}\n",
+        host, username
+    );
+    if let Some(p) = password {
+        payload.push_str(&format!("password={}\n", p));
+    }
+    payload.push('\n');
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(payload.as_bytes())
+            .map_err(|e| format!("Failed to write to git credential stdin: {}", e))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for git credential: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git credential {} failed: {}", action, stderr));
+    }
+    Ok(())
+}
+
+pub fn forget_credential(host: &str, username: &str) -> Result<(), String> {
+    git_credential_op("reject", host, username, None)
+}
+
+pub fn host_for(provider: &str) -> Option<&'static str> {
+    host_for_provider(provider)
+}
+
 #[tauri::command]
 pub fn get_active_git_user() -> Result<GitUser, String> {
     let name = git_config_get("user.name").unwrap_or_default();
@@ -47,8 +110,20 @@ pub fn get_active_git_user() -> Result<GitUser, String> {
 }
 
 #[tauri::command]
-pub fn switch_account(name: String, email: String) -> Result<(), String> {
-    git_config_set("user.name", &name)?;
-    git_config_set("user.email", &email)?;
+pub fn switch_account(id: String) -> Result<(), String> {
+    let account = accounts::get_full_account(&id)?;
+
+    // Update commit identity.
+    git_config_set("user.name", &account.label)?;
+    git_config_set("user.email", &account.email)?;
+
+    // Update the stored credential for this account's host so that
+    // `git push` etc. authenticate as the right user. Best-effort — if
+    // the user has no credential helper configured, this fails harmlessly
+    // and we still return Ok for the identity switch.
+    if let Some(host) = host_for_provider(&account.provider) {
+        let _ = git_credential_op("approve", host, &account.username, Some(&account.token));
+    }
+
     Ok(())
 }

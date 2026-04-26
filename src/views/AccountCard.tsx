@@ -61,7 +61,7 @@ export function AccountCard({
   const ProviderIcon = isGithub ? GithubIcon : BitbucketIcon;
 
   const handleSwitch = () => {
-    switchMutation.mutate({ name: account.label, email: account.email });
+    switchMutation.mutate(account.id);
   };
 
   const handleRemove = () => {

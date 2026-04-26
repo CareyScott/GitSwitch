@@ -47,8 +47,7 @@ export function useRemoveAccount() {
 export function useSwitchAccount() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, email }: { name: string; email: string }) =>
-      switchAccount(name, email),
+    mutationFn: (id: string) => switchAccount(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.activeGitUser });
     },

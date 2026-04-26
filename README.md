@@ -25,9 +25,10 @@ If you work across multiple Git accounts — a personal GitHub, a work Bitbucket
 
 ### Requirements
 
-- macOS 12 or later
+- macOS 12 or later, **or** Windows 10/11
 - [Node.js](https://nodejs.org) (v18 or later)
 - [Rust](https://rustup.rs)
+- On Windows: [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (Desktop development with C++ workload) and [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (preinstalled on Windows 11)
 
 ### Build and run
 
@@ -38,10 +39,14 @@ npm install
 npm run tauri dev
 ```
 
-To build and install directly to `/Applications`:
+To build and install:
 
 ```bash
+# macOS — copies to /Applications
 npm run install:app
+
+# Windows — runs the NSIS installer it produces
+npm run install:app:win
 ```
 
 ## Adding an account
@@ -59,13 +64,17 @@ npm run install:app
 
 ## Your credentials stay on your machine
 
-GitSwitch never sends your tokens anywhere. Everything is stored locally in a plain JSON file on your Mac:
+GitSwitch never sends your tokens anywhere. Account metadata (label, username, email) is stored in a plain JSON file in your OS's config directory; **tokens are stored separately in your operating system's keychain** so they never sit on disk in plaintext.
 
-```
-~/Library/Application Support/git-switch/accounts.json
-```
+| OS      | Account metadata                                       | Tokens                              |
+| ------- | ------------------------------------------------------ | ----------------------------------- |
+| macOS   | `~/Library/Application Support/git-switch/accounts.json` | macOS Keychain (`git-switch` service) |
+| Windows | `%APPDATA%\git-switch\accounts.json`                   | Windows Credential Manager          |
+| Linux   | `~/.config/git-switch/accounts.json`                   | Secret Service (gnome-keyring / KWallet) |
 
-That file is only readable by your user account. No cloud sync, no telemetry, no servers involved. When you click **Switch**, GitSwitch writes directly to your local `~/.gitconfig` — the same file the `git` command reads.
+No cloud sync, no telemetry, no servers involved. When you click **Switch**, GitSwitch writes directly to your global `git config` — the same file the `git` command reads.
+
+If you upgrade from an earlier version that stored tokens in `accounts.json`, GitSwitch will silently migrate them into the OS keychain on first launch.
 
 ---
 

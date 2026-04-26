@@ -27,9 +27,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "app",
+    "targets": "all",
     "category": "DeveloperTool",
-    "shortDescription": "Manage multiple git identities on Mac",
+    "shortDescription": "Manage multiple git identities",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
