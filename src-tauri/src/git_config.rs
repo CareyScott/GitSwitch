@@ -56,7 +56,7 @@ fn git_config_set(key: &str, value: &str) -> Result<(), String> {
 fn git_credential_op(
     action: &str,
     host: &str,
-    username: &str,
+    username: Option<&str>,
     password: Option<&str>,
 ) -> Result<(), String> {
     let mut child = Command::new("git")
@@ -67,10 +67,10 @@ fn git_credential_op(
         .spawn()
         .map_err(|e| format!("Failed to spawn git credential {}: {}", action, e))?;
 
-    let mut payload = format!(
-        "protocol=https\nhost={}\nusername={}\n",
-        host, username
-    );
+    let mut payload = format!("protocol=https\nhost={}\n", host);
+    if let Some(u) = username {
+        payload.push_str(&format!("username={}\n", u));
+    }
     if let Some(p) = password {
         payload.push_str(&format!("password={}\n", p));
     }
@@ -94,7 +94,19 @@ fn git_credential_op(
 }
 
 pub fn forget_credential(host: &str, username: &str) -> Result<(), String> {
-    git_credential_op("reject", host, username, None)
+    git_credential_op("reject", host, Some(username), None)
+}
+
+// Forget the default (unnamespaced) credential for a host. Used to clear
+// stale entries left over from previous setups — e.g. a `PersonalAccessToken`
+// credential that GCM stored before the user installed GitSwitch. Without
+// this, `git push` would keep using the old credential because git asks the
+// helper without a username and gets back the unnamespaced default.
+fn forget_default_credential(host: &str) {
+    // Try a couple of common default usernames that GCM uses when no
+    // username is specified at store time.
+    let _ = git_credential_op("reject", host, None, None);
+    let _ = git_credential_op("reject", host, Some("PersonalAccessToken"), None);
 }
 
 pub fn host_for(provider: &str) -> Option<&'static str> {
@@ -117,12 +129,18 @@ pub fn switch_account(id: String) -> Result<(), String> {
     git_config_set("user.name", &account.label)?;
     git_config_set("user.email", &account.email)?;
 
-    // Update the stored credential for this account's host so that
-    // `git push` etc. authenticate as the right user. Best-effort — if
-    // the user has no credential helper configured, this fails harmlessly
-    // and we still return Ok for the identity switch.
+    // Update the stored credential and pin git to it. Without the username
+    // pin (`credential.<host>.username`), git asks the helper for the host
+    // with no username and gets back whatever default credential GCM has —
+    // often a stale one from a previous setup. Pinning forces git to ask
+    // for *this* account's namespaced credential.
     if let Some(host) = host_for_provider(&account.provider) {
-        let _ = git_credential_op("approve", host, &account.username, Some(&account.token));
+        // Clear any stale unnamespaced default credential for this host so
+        // git doesn't silently reuse it.
+        forget_default_credential(host);
+        let _ = git_credential_op("approve", host, Some(&account.username), Some(&account.token));
+        let url_key = format!("credential.https://{}.username", host);
+        let _ = git_config_set(&url_key, &account.username);
     }
 
     Ok(())
