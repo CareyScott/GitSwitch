@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   MoreHorizontal,
   CheckCircle2,
@@ -7,9 +7,16 @@ import {
   ArrowRightLeft,
   Trash2,
   ShieldCheck,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -21,8 +28,14 @@ import {
   useSwitchAccount,
   useRemoveAccount,
   useValidateAccount,
+  useUpdateAccountSshKey,
 } from "@/lib/accounts";
-import type { Account, ValidationResult } from "@/lib/tauri";
+import {
+  listSshKeys,
+  testSshConnection,
+  type Account,
+  type ValidationResult,
+} from "@/lib/tauri";
 
 // Inline SVG icons for provider logos
 function GithubIcon({ className }: { className?: string }) {
@@ -45,6 +58,153 @@ function BitbucketIcon({ className }: { className?: string }) {
   );
 }
 
+/** Extract the filename from a full SSH key path */
+function sshKeyDisplayName(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || path;
+}
+
+/** Dialog for configuring SSH key on an existing account */
+function SshKeyDialog({
+  open,
+  onOpenChange,
+  account,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  account: Account;
+}) {
+  const updateSshKey = useUpdateAccountSshKey();
+  const [keys, setKeys] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(account.ssh_key_path);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setSelected(account.ssh_key_path);
+      setTestResult(null);
+      listSshKeys().then(setKeys).catch(console.error);
+    }
+  }, [open, account.ssh_key_path]);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testSshConnection(account.provider);
+      setTestResult(result);
+    } catch {
+      setTestResult(false);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    await updateSshKey.mutateAsync({ id: account.id, sshKeyPath: selected });
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[360px]">
+        <DialogTitle className="text-section">Configure SSH Key</DialogTitle>
+        <DialogDescription className="sr-only">
+          Select an SSH key for {account.label}
+        </DialogDescription>
+
+        <div className="mt-3 space-y-1">
+          <button
+            type="button"
+            onClick={() => {
+              setSelected(null);
+              setTestResult(null);
+            }}
+            className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors ${
+              selected === null
+                ? "bg-bg-elevated text-fg-default"
+                : "text-fg-muted hover:bg-bg-elevated"
+            }`}
+          >
+            None (HTTPS only)
+          </button>
+          {keys.map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                setSelected(key);
+                setTestResult(null);
+              }}
+              className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors ${
+                selected === key
+                  ? "bg-bg-elevated text-fg-default"
+                  : "text-fg-muted hover:bg-bg-elevated"
+              }`}
+            >
+              <KeyRound className="h-3 w-3 shrink-0" />
+              <span className="truncate">{sshKeyDisplayName(key)}</span>
+              {account.ssh_key_path === key && (
+                <span className="ml-auto text-[10px] text-success">current</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Test + Save */}
+        <div className="mt-4 flex items-center gap-2">
+          {selected && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTest}
+              disabled={testing}
+              className="text-[11px]"
+            >
+              {testing && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+              Test
+            </Button>
+          )}
+          {testResult !== null && !testing && (
+            <span className="flex items-center gap-1 text-[11px]">
+              {testResult ? (
+                <>
+                  <CheckCircle2 className="h-3 w-3 text-success" />
+                  <span className="text-success">Connected</span>
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-3 w-3 text-danger" />
+                  <span className="text-danger">Failed</span>
+                </>
+              )}
+            </span>
+          )}
+          <div className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={updateSshKey.isPending}
+          >
+            {updateSshKey.isPending && (
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            )}
+            Save
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function AccountCard({
   account,
   isActive,
@@ -56,6 +216,7 @@ export function AccountCard({
   const removeMutation = useRemoveAccount();
   const validateMutation = useValidateAccount();
   const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [sshDialogOpen, setSshDialogOpen] = useState(false);
 
   const isGithub = account.provider === "github";
   const ProviderIcon = isGithub ? GithubIcon : BitbucketIcon;
@@ -75,106 +236,128 @@ export function AccountCard({
   };
 
   return (
-    <div
-      className={`card row-hover titlebar-nodrag flex items-center gap-3 px-4 py-3 ${
-        isActive
-          ? "border-success/30 bg-success/[0.04]"
-          : ""
-      }`}
-    >
-      {/* Provider icon */}
+    <>
       <div
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-        style={{
-          background: isGithub
-            ? "color-mix(in srgb, #e4e7ec 10%, transparent)"
-            : "color-mix(in srgb, #2684FF 12%, transparent)",
-        }}
+        className={`card row-hover titlebar-nodrag flex items-center gap-3 px-4 py-3 ${
+          isActive
+            ? "border-success/30 bg-success/[0.04]"
+            : ""
+        }`}
       >
-        <ProviderIcon
-          className={`h-4.5 w-4.5 ${isGithub ? "text-fg-default" : "text-[#2684FF]"}`}
-        />
-      </div>
-
-      {/* Account details */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-fg-default">
-            {account.label}
-          </span>
-          <Badge
-            className="shrink-0 text-[10px]"
-            style={{
-              borderColor: isGithub
-                ? "color-mix(in srgb, #e4e7ec 20%, transparent)"
-                : "color-mix(in srgb, #2684FF 25%, transparent)",
-              color: isGithub ? "var(--color-fg-muted)" : "#5fa3f5",
-            }}
-          >
-            {isGithub ? "GitHub" : "Bitbucket"}
-          </Badge>
-          {isActive && (
-            <Badge className="shrink-0 border-success/30 bg-success/10 text-success text-[10px]">
-              Active
-            </Badge>
-          )}
-        </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
-          <span className="shrink-0">@{account.username}</span>
-          <span className="truncate text-fg-subtle">{account.email}</span>
-        </div>
-      </div>
-
-      {/* Validation indicator */}
-      {validateMutation.isPending && (
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-subtle" />
-      )}
-      {validation && !validateMutation.isPending && (
-        <span title={validation.error ?? validation.display_name ?? ""}>
-          {validation.valid ? (
-            <CheckCircle2 className="h-4 w-4 text-success" />
-          ) : (
-            <XCircle className="h-4 w-4 text-danger" />
-          )}
-        </span>
-      )}
-
-      {/* Switch button */}
-      {!isActive && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleSwitch}
-          disabled={switchMutation.isPending}
-          className="shrink-0"
+        {/* Provider icon */}
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+          style={{
+            background: isGithub
+              ? "color-mix(in srgb, #e4e7ec 10%, transparent)"
+              : "color-mix(in srgb, #2684FF 12%, transparent)",
+          }}
         >
-          <ArrowRightLeft className="mr-1 h-3 w-3" />
-          Switch
-        </Button>
-      )}
+          <ProviderIcon
+            className={`h-4.5 w-4.5 ${isGithub ? "text-fg-default" : "text-[#2684FF]"}`}
+          />
+        </div>
 
-      {/* More actions */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={handleValidate}>
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Validate credentials
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={handleRemove}
-            className="text-danger focus:text-danger"
+        {/* Account details */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium text-fg-default">
+              {account.label}
+            </span>
+            <Badge
+              className="shrink-0 text-[10px]"
+              style={{
+                borderColor: isGithub
+                  ? "color-mix(in srgb, #e4e7ec 20%, transparent)"
+                  : "color-mix(in srgb, #2684FF 25%, transparent)",
+                color: isGithub ? "var(--color-fg-muted)" : "#5fa3f5",
+              }}
+            >
+              {isGithub ? "GitHub" : "Bitbucket"}
+            </Badge>
+            {isActive && (
+              <Badge className="shrink-0 border-success/30 bg-success/10 text-success text-[10px]">
+                Active
+              </Badge>
+            )}
+          </div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-fg-muted">
+            <span className="shrink-0">@{account.username}</span>
+            <span className="truncate text-fg-subtle">{account.email}</span>
+          </div>
+          {/* SSH key indicator */}
+          {account.ssh_key_path && (
+            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-fg-subtle">
+              <KeyRound className="h-3 w-3" />
+              <span className="truncate">
+                {sshKeyDisplayName(account.ssh_key_path)}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Validation indicator */}
+        {validateMutation.isPending && (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-subtle" />
+        )}
+        {validation && !validateMutation.isPending && (
+          <span title={validation.error ?? validation.display_name ?? ""}>
+            {validation.valid ? (
+              <CheckCircle2 className="h-4 w-4 text-success" />
+            ) : (
+              <XCircle className="h-4 w-4 text-danger" />
+            )}
+          </span>
+        )}
+
+        {/* Switch button */}
+        {!isActive && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSwitch}
+            disabled={switchMutation.isPending}
+            className="shrink-0"
           >
-            <Trash2 className="h-3.5 w-3.5" />
-            Remove account
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+            <ArrowRightLeft className="mr-1 h-3 w-3" />
+            Switch
+          </Button>
+        )}
+
+        {/* More actions */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={handleValidate}>
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Validate credentials
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSshDialogOpen(true)}>
+              <KeyRound className="h-3.5 w-3.5" />
+              Configure SSH key
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={handleRemove}
+              className="text-danger focus:text-danger"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Remove account
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* SSH Key configuration dialog */}
+      <SshKeyDialog
+        open={sshDialogOpen}
+        onOpenChange={setSshDialogOpen}
+        account={account}
+      />
+    </>
   );
 }

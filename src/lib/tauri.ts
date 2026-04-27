@@ -6,6 +6,8 @@ export interface Account {
   label: string;
   username: string;
   email: string;
+  url_username: string | null;
+  ssh_key_path: string | null;
   token: string; // masked from backend
 }
 
@@ -18,6 +20,7 @@ export interface ValidationResult {
   valid: boolean;
   display_name: string | null;
   avatar_url: string | null;
+  url_username: string | null;
   error: string | null;
 }
 
@@ -26,7 +29,9 @@ export interface NewAccount {
   label: string;
   username: string;
   email: string;
-  token: string;
+  url_username?: string | null;
+  ssh_key_path?: string | null;
+  token?: string | null;
 }
 
 export const getAccounts = () => invoke<Account[]>("get_accounts");
@@ -71,3 +76,12 @@ export const githubDeviceStart = () =>
   invoke<DeviceFlowStart>("github_device_start");
 export const githubDevicePoll = (device_code: string) =>
   invoke<DeviceFlowPoll>("github_device_poll", { deviceCode: device_code });
+
+export const listSshKeys = () => invoke<string[]>("list_ssh_keys");
+
+export const detectSshKeyForHost = (provider: string) =>
+  invoke<string | null>("detect_ssh_key_for_host", { provider });
+export const testSshConnection = (provider: string) =>
+  invoke<boolean>("test_ssh_connection", { provider });
+export const updateAccountSshKey = (id: string, sshKeyPath: string | null) =>
+  invoke<void>("update_account_ssh_key", { id, sshKeyPath });
