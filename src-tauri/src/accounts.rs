@@ -11,6 +11,10 @@ pub struct Account {
     pub label: String,
     pub username: String,
     pub email: String,
+    #[serde(default)]
+    pub url_username: Option<String>,
+    #[serde(default)]
+    pub ssh_key_path: Option<String>,
     // Tokens live in the OS keychain, not on disk.
     // The field is kept on the struct for legacy migration: accounts.json
     // written by older versions had plaintext tokens here, which we move into
@@ -26,6 +30,8 @@ pub struct AccountSafe {
     pub label: String,
     pub username: String,
     pub email: String,
+    pub url_username: Option<String>,
+    pub ssh_key_path: Option<String>,
     pub token: String, // masked
 }
 
@@ -35,7 +41,10 @@ pub struct NewAccount {
     pub label: String,
     pub username: String,
     pub email: String,
-    pub token: String,
+    pub url_username: Option<String>,
+    pub ssh_key_path: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -143,6 +152,8 @@ fn to_safe(account: &Account) -> AccountSafe {
         label: account.label.clone(),
         username: account.username.clone(),
         email: account.email.clone(),
+        url_username: account.url_username.clone(),
+        ssh_key_path: account.ssh_key_path.clone(),
         token: masked,
     }
 }
@@ -158,9 +169,11 @@ pub fn add_account(account: NewAccount) -> Result<AccountSafe, String> {
     let mut store = read_store();
     let id = uuid::Uuid::new_v4().to_string();
 
-    // Write secret to keyring first; if that fails we never persist a
-    // half-rowed account whose secret is missing.
-    keyring_set(&id, &account.token)?;
+    // Only write to keyring if a token was provided (SSH-only accounts may not have one)
+    let has_token = account.token.as_ref().map_or(false, |t| !t.is_empty());
+    if has_token {
+        keyring_set(&id, account.token.as_ref().unwrap())?;
+    }
 
     let new_account = Account {
         id: id.clone(),
@@ -168,6 +181,8 @@ pub fn add_account(account: NewAccount) -> Result<AccountSafe, String> {
         label: account.label,
         username: account.username,
         email: account.email,
+        url_username: account.url_username,
+        ssh_key_path: account.ssh_key_path,
         token: String::new(),
     };
 
@@ -176,7 +191,9 @@ pub fn add_account(account: NewAccount) -> Result<AccountSafe, String> {
 
     if let Err(e) = write_store(&store) {
         // Roll back the orphaned keyring entry so we don't leak secrets.
-        keyring_delete(&id);
+        if has_token {
+            keyring_delete(&id);
+        }
         return Err(e);
     }
 
@@ -226,8 +243,28 @@ pub fn get_full_account(id: &str) -> Result<Account, String> {
         .find(|a| a.id == id)
         .cloned()
         .ok_or_else(|| format!("Account {} not found", id))?;
-    account.token = keyring_get(id).ok_or_else(|| {
-        format!("Token for account {} not found in keychain", id)
-    })?;
+    account.token = keyring_get(id).unwrap_or_default();
     Ok(account)
+}
+
+/// Update the url_username field for an account. Called after validation
+/// discovers the Bitbucket workspace handle.
+pub fn update_url_username(id: &str, url_username: Option<&str>) -> Result<(), String> {
+    let mut store = read_store();
+    if let Some(account) = store.accounts.iter_mut().find(|a| a.id == id) {
+        account.url_username = url_username.map(|s| s.to_string());
+        write_store(&store)?;
+    }
+    Ok(())
+}
+
+/// Update the ssh_key_path field for an account.
+#[allow(dead_code)]
+pub fn update_ssh_key_path(id: &str, ssh_key_path: Option<&str>) -> Result<(), String> {
+    let mut store = read_store();
+    if let Some(account) = store.accounts.iter_mut().find(|a| a.id == id) {
+        account.ssh_key_path = ssh_key_path.map(|s| s.to_string());
+        write_store(&store)?;
+    }
+    Ok(())
 }

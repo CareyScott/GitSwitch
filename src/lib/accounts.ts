@@ -7,6 +7,7 @@ import {
   getActiveGitUser,
   switchAccount,
   validateAccount,
+  updateAccountSshKey,
   type NewAccount,
 } from "./tauri";
 
@@ -57,5 +58,16 @@ export function useSwitchAccount() {
 export function useValidateAccount() {
   return useMutation({
     mutationFn: (id: string) => validateAccount(id),
+  });
+}
+
+export function useUpdateAccountSshKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, sshKeyPath }: { id: string; sshKeyPath: string | null }) =>
+      updateAccountSshKey(id, sshKeyPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.accounts });
+    },
   });
 }
