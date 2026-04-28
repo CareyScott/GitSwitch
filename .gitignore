@@ -16,6 +16,9 @@ dist-ssr
 # Rust build artifacts
 src-tauri/target/
 
+# Local task notes (not for VCS)
+.todos/
+
 # Editor directories and files
 .vscode/
 .idea

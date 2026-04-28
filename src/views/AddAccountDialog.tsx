@@ -3,6 +3,8 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  KeyRound,
+  ChevronDown,
 } from "lucide-react";
 import { DeviceFlowDialog } from "./DeviceFlowDialog";
 import {
@@ -17,6 +19,9 @@ import { useAddAccount } from "@/lib/accounts";
 import {
   validateGithub,
   validateBitbucket,
+  listSshKeys,
+  detectSshKeyForHost,
+  testSshConnection,
   type ValidationResult,
   type NewAccount,
 } from "@/lib/tauri";
@@ -38,6 +43,12 @@ function BitbucketIcon({ className }: { className?: string }) {
   );
 }
 
+/** Extract the filename portion from a full SSH key path */
+function sshKeyDisplayName(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || path;
+}
+
 export function AddAccountDialog({
   open,
   onOpenChange,
@@ -55,6 +66,14 @@ export function AddAccountDialog({
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
 
+  const [sshKeyPath, setSshKeyPath] = useState<string | null>(null);
+  const [detectedSshKey, setDetectedSshKey] = useState<string | null>(null);
+  const [sshKeys, setSshKeys] = useState<string[]>([]);
+  const [showKeyPicker, setShowKeyPicker] = useState(false);
+
+  const [sshTesting, setSshTesting] = useState(false);
+  const [sshTestResult, setSshTestResult] = useState<boolean | null>(null);
+
   const [validating, setValidating] = useState(false);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [deviceOpen, setDeviceOpen] = useState(false);
@@ -69,16 +88,41 @@ export function AddAccountDialog({
     }
   }, [open, prefill]);
 
+  // Fetch available SSH keys when the dialog opens.
+  useEffect(() => {
+    if (open) {
+      listSshKeys().then(setSshKeys).catch(console.error);
+    }
+  }, [open]);
+
+  // Auto-detect SSH key when provider changes.
+  useEffect(() => {
+    if (open) {
+      setDetectedSshKey(null);
+      setSshTestResult(null);
+      detectSshKeyForHost(provider)
+        .then((key) => {
+          setDetectedSshKey(key);
+          if (key) setSshKeyPath(key);
+        })
+        .catch(console.error);
+    }
+  }, [open, provider]);
+
   const resetForm = () => {
     setProvider("github");
     setLabel("");
     setUsername("");
     setEmail("");
     setToken("");
+    setSshKeyPath(null);
+    setDetectedSshKey(null);
+    setSshTestResult(null);
+    setShowKeyPicker(false);
     setValidation(null);
   };
 
-  const handleTest = async () => {
+  const handleTestHttps = async () => {
     setValidating(true);
     setValidation(null);
     try {
@@ -95,10 +139,24 @@ export function AddAccountDialog({
         valid: false,
         display_name: null,
         avatar_url: null,
+        url_username: null,
         error: String(err),
       });
     } finally {
       setValidating(false);
+    }
+  };
+
+  const handleTestSsh = async () => {
+    setSshTesting(true);
+    setSshTestResult(null);
+    try {
+      const result = await testSshConnection(provider);
+      setSshTestResult(result);
+    } catch {
+      setSshTestResult(false);
+    } finally {
+      setSshTesting(false);
     }
   };
 
@@ -108,15 +166,19 @@ export function AddAccountDialog({
       label: label || username,
       username,
       email,
-      token,
+      url_username: validation?.url_username ?? null,
+      ssh_key_path: sshKeyPath || null,
+      token: token || null,
     };
     await addMutation.mutateAsync(account);
     resetForm();
     onOpenChange(false);
   };
 
-  const canTest = username.trim() && token.trim();
-  const canSubmit = username.trim() && email.trim() && token.trim();
+  const canTestHttps = username.trim() && token.trim();
+  const canTestSsh = !!sshKeyPath;
+  const canSubmit =
+    username.trim() && email.trim() && (token.trim() || sshKeyPath);
 
   return (
     <Dialog
@@ -226,57 +288,193 @@ export function AddAccountDialog({
             />
           </div>
 
-          {/* Token */}
-          <div>
-            <label className="text-label mb-1.5 block">
-              {isGithub ? "Personal Access Token" : "App Password"}
-            </label>
-            <Input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={
-                isGithub ? "ghp_xxxxxxxxxxxx" : "App password from Bitbucket settings"
-              }
-            />
-            <p className="mt-1 text-[11px] text-fg-subtle">
-              {isGithub
-                ? "Generate at GitHub Settings > Developer settings > Personal access tokens"
-                : "Generate at Bitbucket Settings > App passwords"}
-            </p>
-          </div>
+          {/* ─── Authentication Section ─── */}
+          <div className="space-y-3">
+            <p className="text-label">Authentication</p>
 
-          {/* Test credentials */}
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleTest}
-              disabled={!canTest || validating}
-            >
-              {validating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-              Test Credentials
-            </Button>
+            {/* SSH Key Card */}
+            <div className="rounded-md border border-border-default bg-bg-surface p-3">
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-fg-muted mb-2">
+                <KeyRound className="h-3 w-3" />
+                SSH Key
+              </div>
 
-            {validation && !validating && (
-              <span className="flex items-center gap-1.5 text-xs">
-                {validation.valid ? (
-                  <>
-                    <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                    <span className="text-success">
-                      {validation.display_name ?? "Valid"}
+              {sshKeyPath && !showKeyPicker ? (
+                /* Detected / selected key display */
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-medium text-fg-default">
+                        {sshKeyDisplayName(sshKeyPath)}
+                      </span>
+                      {detectedSshKey === sshKeyPath && (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                      )}
+                    </div>
+                    <p className="text-[11px] text-fg-subtle mt-0.5">
+                      {detectedSshKey === sshKeyPath
+                        ? "Detected from SSH config"
+                        : "Manually selected"}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowKeyPicker(true)}
+                    className="shrink-0 text-[11px] text-fg-muted"
+                  >
+                    Change
+                    <ChevronDown className="ml-0.5 h-3 w-3" />
+                  </Button>
+                </div>
+              ) : (
+                /* Key picker list */
+                <div className="space-y-1">
+                  {!sshKeyPath && !showKeyPicker && (
+                    <p className="text-[11px] text-fg-subtle mb-2">
+                      No SSH key detected for {isGithub ? "github.com" : "bitbucket.org"}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSshKeyPath(null);
+                      setSshTestResult(null);
+                      setShowKeyPicker(false);
+                    }}
+                    className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors ${
+                      !sshKeyPath
+                        ? "bg-bg-elevated text-fg-default"
+                        : "text-fg-muted hover:bg-bg-elevated"
+                    }`}
+                  >
+                    None (HTTPS only)
+                  </button>
+                  {sshKeys.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        setSshKeyPath(key);
+                        setSshTestResult(null);
+                        setShowKeyPicker(false);
+                      }}
+                      className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors ${
+                        sshKeyPath === key
+                          ? "bg-bg-elevated text-fg-default"
+                          : "text-fg-muted hover:bg-bg-elevated"
+                      }`}
+                    >
+                      <KeyRound className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{sshKeyDisplayName(key)}</span>
+                      {detectedSshKey === key && (
+                        <span className="ml-auto text-[10px] text-success">detected</span>
+                      )}
+                    </button>
+                  ))}
+                  {showKeyPicker && (
+                    <button
+                      type="button"
+                      onClick={() => setShowKeyPicker(false)}
+                      className="mt-1 text-[11px] text-fg-subtle hover:text-fg-muted"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Test SSH button */}
+              {sshKeyPath && !showKeyPicker && (
+                <div className="mt-2 flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestSsh}
+                    disabled={!canTestSsh || sshTesting}
+                    className="text-[11px]"
+                  >
+                    {sshTesting && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Test SSH
+                  </Button>
+                  {sshTestResult !== null && !sshTesting && (
+                    <span className="flex items-center gap-1 text-[11px]">
+                      {sshTestResult ? (
+                        <>
+                          <CheckCircle2 className="h-3 w-3 text-success" />
+                          <span className="text-success">Connected</span>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="h-3 w-3 text-danger" />
+                          <span className="text-danger">Failed</span>
+                        </>
+                      )}
                     </span>
-                  </>
-                ) : (
-                  <>
-                    <XCircle className="h-3.5 w-3.5 text-danger" />
-                    <span className="text-danger">
-                      {validation.error ?? "Invalid credentials"}
-                    </span>
-                  </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* HTTPS Token */}
+            <div className="rounded-md border border-border-default bg-bg-surface p-3">
+              <label className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-fg-muted mb-2">
+                {isGithub ? "Personal Access Token" : "App Password"}
+                {sshKeyPath && (
+                  <span className="normal-case text-fg-subtle">(optional)</span>
                 )}
-              </span>
-            )}
+              </label>
+              <Input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder={
+                  isGithub ? "ghp_xxxxxxxxxxxx" : "App password from Bitbucket settings"
+                }
+              />
+              <p className="mt-1.5 text-[11px] text-fg-subtle">
+                {sshKeyPath
+                  ? "Required for HTTPS push. Optional if using SSH."
+                  : isGithub
+                    ? "Generate at GitHub Settings > Developer settings > Personal access tokens"
+                    : "Generate at Bitbucket Settings > App passwords"}
+              </p>
+
+              {/* Test HTTPS credentials */}
+              {token.trim() && (
+                <div className="mt-2 flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestHttps}
+                    disabled={!canTestHttps || validating}
+                    className="text-[11px]"
+                  >
+                    {validating && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Test Token
+                  </Button>
+                  {validation && !validating && (
+                    <span className="flex items-center gap-1 text-[11px]">
+                      {validation.valid ? (
+                        <>
+                          <CheckCircle2 className="h-3 w-3 text-success" />
+                          <span className="text-success">
+                            {validation.display_name ?? "Valid"}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="h-3 w-3 text-danger" />
+                          <span className="text-danger">
+                            {validation.error ?? "Invalid"}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Submit */}
@@ -318,6 +516,7 @@ export function AddAccountDialog({
             valid: true,
             display_name: display_name ?? u,
             avatar_url: null,
+            url_username: null,
             error: null,
           });
         }}
